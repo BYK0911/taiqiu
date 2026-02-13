@@ -16,12 +16,16 @@ export class Game {
   aimAtPoint: { x: number, y: number } | null = null
   cueBall: Ball | null = null
   balls: Ball[] = []
+  cueLimit = 3
+  aimLineVisible = false
 
   outterWidth = TABLE_OUTTER_WIDTH
   outterHeight = TABLE_OUTTER_HEIGHT
   innerWidth = TABLE_INNER_WIDTH
   innerHeight = TABLE_INNER_HEIGHT
-  _path: Path2D | null = null
+  
+  private _path: Path2D | null = null
+  private _aimLineCache: Record<string, { x: number, y: number }[]> = {}
 
   get path () {
     if (!this._path) {
@@ -64,7 +68,6 @@ export class Game {
     ctx.clearRect(0, 0, this.width, this.height)
     ctx.translate(this.x, this.y)
     ctx.scale(this.scale, this.scale)
-    ctx.rotate(this.rotation)
     const x = (this.outterWidth - this.innerWidth) / 2
     const y = (this.outterHeight - this.innerHeight) / 2
     ctx.translate(-x, -y)
@@ -73,20 +76,37 @@ export class Game {
     ctx.translate(x, y)
     ctx.fillStyle = '#0a0'
     ctx.fillRect(0, 0, this.innerWidth, this.innerHeight)
+
     this.balls.forEach(ball => {
       ball.render(ctx)
     })
 
     if (this.cueBall && this.aimAtPoint) {
+      const path = this.calcAimLine()
+      ctx.save()
+      ctx.beginPath()
+      ctx.setLineDash([5 / this.scale, 5 / this.scale])
+      ctx.lineWidth = 1 / this.scale
+      ctx.strokeStyle = '#FFF'
+      ctx.moveTo(this.cueBall.x, this.cueBall.y)
+      ctx.lineTo(path[0]!.x, path[0]!.y)
+      ctx.stroke()
+      ctx.restore()
+    }
+
+    if (this.cueBall && this.aimAtPoint && this.aimLineVisible) {
       this.drawAimLine(ctx)
     }
     ctx.restore()
   }
 
-  drawAimLine (ctx: CanvasRenderingContext2D) {
-    if (!this.cueBall || !this.aimAtPoint) return
+  calcAimLine () {
+    if (!this.cueBall || !this.aimAtPoint) return []
+    const key = `${this.cueBall.x}-${this.cueBall.y}-${this.aimAtPoint?.x}-${this.aimAtPoint?.y}`
 
-    const path: { x: number, y: number }[] = []
+    if (this._aimLineCache[key]) return this._aimLineCache[key]
+    
+    const path: { x: number, y: number }[] = this._aimLineCache[key] = []
     let start: { x: number, y: number } = this.cueBall
     let end: { x: number, y: number } = this.aimAtPoint
     let n = -1
@@ -107,11 +127,19 @@ export class Game {
         }
       }
     }
+
+    return path
+  }
+
+  drawAimLine (ctx: CanvasRenderingContext2D) {
+    if (!this.cueBall || !this.aimAtPoint) return
+
+    const path = this.calcAimLine()
     ctx.save()
     ctx.beginPath()
     ctx.setLineDash([5 / this.scale, 5 / this.scale])
     ctx.lineWidth = 1 / this.scale
-    ctx.strokeStyle = '#FFF'
+    ctx.strokeStyle = this.cueLimit == path.length - 1 ? '#0f0' : '#f00'
     ctx.moveTo(this.cueBall.x, this.cueBall.y)
     path.forEach(point => {
       ctx.lineTo(point.x, point.y)
@@ -123,7 +151,7 @@ export class Game {
   getBallOnLine (p1: { x: number, y: number }, p2: { x: number, y: number }, start = false) {
     return this.balls.find(ball => {
       if (ball === this.cueBall) return false
-      return isPointOnSegment(p1.x, p1.y, p2.x, p2.y, ball.x, ball.y,  BALL_RADIUS / 2, start)
+      return isPointOnSegment(p1.x, p1.y, p2.x, p2.y, ball.x, ball.y,  BALL_RADIUS, start)
     })
   }
 
@@ -154,9 +182,9 @@ export class Game {
       this.innerHeight = TABLE_INNER_WIDTH
       this.innerWidth = TABLE_INNER_HEIGHT
     }
-    const s = this.scale = Math.min(width / this.outterWidth, height / this.outterHeight) * 0.8
-    this.x = (width - this.outterWidth * s) / 2
-    this.y = (height - this.outterHeight * s) / 2
+    const s = this.scale = Math.min(width / this.innerWidth, height / this.innerHeight) * 0.75
+    this.x = (width - this.innerWidth * s) / 2
+    this.y = (height - this.innerHeight * s) / 2
     this.canvas.width = width * this.dpi
     this.canvas.height = height * this.dpi
     this.canvas.style.width = `${width}px`
@@ -168,6 +196,8 @@ export class Game {
   }
 
   addBall (x: number, y: number, number: number) {
+    if (x < BALL_RADIUS / 2 || x > this.innerWidth - BALL_RADIUS || y < BALL_RADIUS / 2 || y > this.innerHeight - BALL_RADIUS) return null
+
     const ball = new Ball(x, y, number)
     this.balls.push(ball)
     return ball
@@ -178,5 +208,26 @@ export class Game {
       x: (x - this.x) / this.scale,
       y: (y - this.y) / this.scale,
     }
+  }
+
+  getBallAtPoint (x: number, y: number) {
+    const p = this.getRelativePosition(x, y)
+    return this.balls.find((ball) => {
+      const dx = p.x - ball.x
+      const dy = p.y - ball.y
+      return dx * dx + dy * dy <= ball.radius * ball.radius
+    })
+  }
+
+  moveBall (ball: Ball, dx: number, dy: number) {
+    ball.x = Math.max(ball.radius / 2, Math.min(this.innerWidth - ball.radius, ball.x + dx))
+    ball.y = Math.max(ball.radius / 2, Math.min(this.innerHeight - ball.radius, ball.y + dy))
+  }
+
+  reset () {
+    this.cueBall = null
+    this.aimAtPoint = null
+    this.aimLineVisible = false
+    this.balls = []
   }
 }
